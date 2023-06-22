@@ -28,7 +28,8 @@ CHANNELS_PER_CRP = 3072
 TIMESTAMPS_PER_FRAME = 8192
 MAX_PEAKS_PER_EVENT = 4
 
-BAD_CHANNELS = [1958, 2250, 2868]
+#BAD_CHANNELS = [1958, 2250, 2868]
+#BAD_CHANNELS = [182, 1424, 1849, 2949, 2997, 3019]
 
 def peak_heights(arr, cutoff: int):
     """Find heights of peaks in 1d numpy array arr with heights greater than
@@ -38,7 +39,7 @@ def peak_heights(arr, cutoff: int):
     logging.debug('* * * * Peaks: %s\n* * * * Peak info: %s', str(peaks), str(peakinfo))
     return peakinfo['prominences'], peaks, peakinfo
 
-def apply_mask(arr):
+def apply_mask(arr, BAD_CHANNELS):
     """Applies mask to 2d array of peak heights
     Blocks out zeros and known bad channels"""
     arr_masked = np.ma.masked_equal(arr, 0, copy=False)
@@ -48,14 +49,26 @@ def apply_mask(arr):
 
 def read_parameters(parametersfname):
     """Read parameters file into pandas dataframe"""
+    logging.info('Reading parameters file %s . . .', parametersfname)
     parameters = pd.read_csv(parametersfname, sep='\t', header=0, index_col=0, dtype={'Run number': 'Int32', 'Filename': 'string', 'Pulser DAC': 'Int8', 'Peaksfile': 'string'})
+    logging.info('Successfully read parameters file')
     return parameters
 
-def read_peaksfile(fname):
+def read_config(configfname):
+    """Read config file"""
+    logging.info('Reading config file %s . . .', configfname)
+    configdf = pd.read_csv(configfname, sep='\t', header=0, index_col=0, dtype={'Parameter': 'string', 'Value': 'string'}, usecols=[0, 1])
+    config = configdf.to_dict()['Value']
+    config['bad_channels'] = [int(i) for i in config['bad_channels'].split(',')]
+    logging.info('Successfully read config file')
+    logging.debug('Config: %s', str(config))
+    return config
+
+def read_peaksfile(fname, config):
     """Read file with peaks data"""
     peaks = np.loadtxt(fname, dtype=np.int16, delimiter='\t')
     assert peaks.shape[0] == CHANNELS_PER_CRP and peaks.shape[1] % MAX_PEAKS_PER_EVENT == 0
-    peaks_masked = apply_mask(peaks)
+    peaks_masked = apply_mask(peaks, config['bad_channels'])
     return peaks_masked
 
 def write_peaksfile(fname, arr):
@@ -63,7 +76,7 @@ def write_peaksfile(fname, arr):
     assert arr.shape[0] == CHANNELS_PER_CRP and arr.shape[1] % MAX_PEAKS_PER_EVENT == 0
     np.savetxt(fname, arr, fmt='%d', delimiter='\t')
 
-def main():
+def set_loglevel():
     if len(sys.argv) >= 3:
         loglevel = sys.argv[2]
     else:
@@ -73,17 +86,27 @@ def main():
         raise ValueError('Invalid log level: %s' % loglevel)
     logging.basicConfig(level=numeric_level)
     #logging.basicConfig(filename='log.log', level=logging.INFO)
+
+def frames_in_file_iter(fname: str):
+    """Iterable for looping over frames in a file"""
+    raise NotImplementedError()
+
+def main():
+    set_loglevel()
     if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} FILELIST')
+        print(f'Usage: {sys.argv[0]} CONFIGFILE')
         return 0
-    parametersfname = pathlib.Path(sys.argv[1])
+    configfname = pathlib.Path(sys.argv[1])
+    if not configfname.exists():
+        print(f'No such file: {configfname}')
+        return 0
+    config = read_config(configfname)
+    parametersfname = pathlib.Path(config['parametersfname'])
     if not parametersfname.exists():
         print(f'No such file: {parametersfname}')
         return 0
-
-    logging.info('Reading parameters file %s . . .', parametersfname)
     parameters = read_parameters(parametersfname)
-    logging.info('Successfully read parameters file')
+    BAD_CHANNELS = config['bad_channels']
 
     for run_number in parameters.index:
         fname = parameters.at[run_number, 'Filename']
@@ -95,6 +118,7 @@ def main():
         records = h5_file.get_all_record_ids()
         # assuming no more than 4 peaks per frame ???
         allpeakheights = np.zeros((CHANNELS_PER_CRP, len(records), MAX_PEAKS_PER_EVENT), dtype=np.int16)
+        #alldata = []    # new pedestal-finding terrible
         first = True
         for rec in records:
             logging.info('* Record: %s', str(rec))
@@ -116,7 +140,12 @@ def main():
                     frameheader = frame.get_header()
                     assert frameheader.version == 4
                     data = rawdatautils.unpack.wib2.np_array_adc(frag).T
-                    assert data.shape == (256, TIMESTAMPS_PER_FRAME)
+                    # new pedestal-finding
+                    #alldata.append(data)
+                    if data.shape != (256, TIMESTAMPS_PER_FRAME):
+                        logging.warning('Bad data shape? shape: %s for fragment %s, record %s', str(data.shape), fragpath, str(rec))
+                    #logging.debug('* * * data shape: %s', str(data.shape))
+                    #assert data.shape == (256, TIMESTAMPS_PER_FRAME)
                     if first:
                         cutoff = round(np.std(data[0]) * 6)
                         logging.info('Using cutoff: %d', cutoff)
@@ -164,7 +193,7 @@ def main():
                     ## probably don't need to regenerate this each time
                     #chnums = CHANNEL_MAP.get_offline_channel_from_crate_slot_fiber_chan(frameheader.crate, frameheader.slot, frameheader.link, np.arange(data.shape[1]))
         allpeakheights_flatter = allpeakheights.reshape((CHANNELS_PER_CRP, len(records) * MAX_PEAKS_PER_EVENT))
-        allpeakheights_masked = apply_mask(allpeakheights_flatter)
+        allpeakheights_masked = apply_mask(allpeakheights_flatter, BAD_CHANNELS)
         write_peaksfile(parameters.at[run_number, 'Peaksfile'], allpeakheights_masked)
         first = False
 
