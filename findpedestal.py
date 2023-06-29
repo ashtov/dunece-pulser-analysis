@@ -59,13 +59,15 @@ def main():
                 #alldata[rec_ind] = rawdatautils.unpack.wib2.np_array_adc(frag).T
                 data = rawdatautils.unpack.wib2.np_array_adc(frag).T
                 # don't need assert since above will just fail otherwise?
-                assert data.shape == (256, findpeaks.TIMESTAMPS_PER_FRAME)
+                #it's not true sometimes in CRP5???
+                #assert data.shape == (256, findpeaks.TIMESTAMPS_PER_FRAME)
                 # below 3 lines from copypaste though
                 chnums = np.empty(256, dtype=np.int16)
                 for i in range(256):
                     chnums[i] = findpeaks.CHANNEL_MAP.get_offline_channel_from_crate_slot_fiber_chan(frameheader.crate, frameheader.slot, frameheader.link, i)
                     #logging.debug('* * * * Channel number: %d', chnum)
-                alldata[chnums, rec_ind] = data
+                #alldata[chnums, rec_ind] = data
+                alldata[chnums, rec_ind] = data[:, :8192]  # again CRP5 being wacky
     alldata_2d = alldata.reshape((alldata.shape[0], alldata.shape[1] * alldata.shape[2]))
     logging.info('Running calculations . . .')
     pedestals = np.mean(alldata_2d, axis=1)

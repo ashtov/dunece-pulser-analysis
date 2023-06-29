@@ -144,7 +144,7 @@ if len(sys.argv) > 5:
             #r = slice(peaks[k] - 20, peaks[k] + 20)
             x2 = np.arange(indstart, indend)
             #print(f'Lengths: x2: {len(x2)}, y[r]: {len(y[r])}')
-            ax[k].scatter(x2, y[indstart:indend], s=3)
+            ax[k].scatter(x2, y[indstart:indend], s=10)
             ax[k].set_xlabel(f'peak: {k}, prominence: {peaksinfo["prominences"][k]}')
             ax[k].set_yticks(np.arange(0, 16385, 2048))
             ax[k].set_yticks(np.arange(0, 16385, 512), minor=True)
