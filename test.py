@@ -130,7 +130,7 @@ if len(sys.argv) > 5:
         pprint([f'{i}: {getattr(frameheader, i)}' for i in ('crate', 'slot', 'link')])
         adcdata = rawdatautils.unpack.wib2.np_array_adc(frag)
         y = adcdata[:, MYCHAN.channel]
-        fig, ax = plt.subplots(figsize=(8, 4))
+        fig, ax = plt.subplots(figsize=(32, 8), layout='constrained')
         ax.plot(y, linewidth=0.3)
         fig.savefig(f'rawsignalplots/signal_{pulserDAC}_{channelnum}_{j}.png')
         plt.close()

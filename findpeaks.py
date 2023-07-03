@@ -32,6 +32,8 @@ TIMESTAMPS_PER_FRAME = 8192
 MAX_PEAKS_PER_EVENT = 4
 TIME_PER_SAMPLE = 0.512 # microseconds
 
+MAGIC_CONVERSION_FACTOR = 10.11973588 
+
 #BAD_CHANNELS = [1958, 2250, 2868]
 #BAD_CHANNELS = [182, 1424, 1849, 2949, 2997, 3019]
 
@@ -43,13 +45,18 @@ def peak_heights(arr, cutoff: int):
     logging.debug('* * * * Peaks: %s\n* * * * Peak info: %s', str(peaks), str(peakinfo))
     return peakinfo['prominences'], peaks, peakinfo
 
-def fit_peak(arr, height):
+def fit_peak(arr, height, base=None):
     """Attempts to fit filtfunc.f() to the peak beginning at index peakpos in
     arr and returns fit parameters."""
+    # FIX THIS MESS LATER, filtfunc should probably not have h and b in it
     # or the peak contained entirely in arr, with nothing else?
     # hardcoded one step = 0.5 ms?
     #popt, pcov = scipy.optimize.curve_fit(filtfunc.f, np.arange(len(arr)) / 2, arr, p0=[height, 2., 0., arr[0]], bounds=((0., 1.5, -0., 0.), (163840, 2.5, +2., 16384)))
-    popt, pcov = scipy.optimize.curve_fit(filtfunc.f, np.arange(len(arr)) * TIME_PER_SAMPLE, arr, p0=[height, 2., 0., arr[0]], bounds=((0., 1.5, -1., arr[0] - 25), (163840, 2.5, +4., arr[0] + 25)))
+    if base:
+        f = lambda t, A0, tp, h: filtfunc.f(t, A0, tp, h, base)
+        popt, pcov = scipy.optimize.curve_fit(f, np.arange(len(arr)) * TIME_PER_SAMPLE, arr, p0=[height * MAGIC_CONVERSION_FACTOR, 2., 0.], bounds=((0., 1.5, -1.), (16384 * MAGIC_CONVERSION_FACTOR, 2.5, +4.)))
+    else:
+        popt, pcov = scipy.optimize.curve_fit(filtfunc.f, np.arange(len(arr)) * TIME_PER_SAMPLE, arr, p0=[height * MAGIC_CONVERSION_FACTOR, 2., 0., arr[0]], bounds=((0., 1.5, -1., arr[0] - 25), (16384 * MAGIC_CONVERSION_FACTOR, 2.5, +4., arr[0] + 25)))
     return popt, pcov
 
 def apply_mask(arr, BAD_CHANNELS):
@@ -121,8 +128,16 @@ def main():
     parameters = read_parameters(parametersfname)
     BAD_CHANNELS = config['bad_channels']
 
+    negative = config['negative'] == 'yes'
+    logging.info('Using negative data: %s', str(negative))
+
     for run_number in parameters.index:
         pulserDAC = parameters.at[run_number, 'Pulser DAC']
+        if pulserDAC != 50:     # DEBUG
+            continue
+        if negative and pulserDAC > 31:
+            logging.info('Negative pulses selected, skipping Pulser DAC = %d', pulserDAC)
+            continue
         fname = parameters.at[run_number, 'Filename']
         logging.info('Reading file %s . . .', fname)
         h5_file = HDF5RawDataFile(fname)
@@ -135,13 +150,15 @@ def main():
         #alldata = []    # new pedestal-finding terrible
         first = True
         #for rec in records:
-        for rec in records[:2]: # DEBUG
+        for rec in records[:1]: # DEBUG
             logging.info('* Record: %s', str(rec))
             assert rec[1] == 0
             # One "fragment" is either data and metadata from a single WIB or some
             # other metadata about the event.
             fragpaths: list[str] = h5_file.get_fragment_dataset_paths(rec)
             for fragnum, fragpath in enumerate(fragpaths):
+                #if fragnum == 0:    # DEBUG
+                #    continue
                 logging.debug('* * Fragment: %s', fragpath)
                 frag = h5_file.get_frag(fragpath)
                 fragheader = frag.get_header()
@@ -166,10 +183,24 @@ def main():
                         logging.info('Using cutoff: %d', cutoff)
                         first = False
                     firstchan = True    # this solves problem with first channel of 256 not having reasonable peaks
-                    #for i in range(256):
-                    for i in range(1):
+                    if negative:
+                        data = -data - 49152    # flip over data for negative peaks
+                    #for i in range(1):
+                    ## DEBUG
+                    #n = 245 if fragnum == 1 else 0
+                    for i in range(256):
                         chnum = CHANNEL_MAP.get_offline_channel_from_crate_slot_fiber_chan(frameheader.crate, frameheader.slot, frameheader.link, i)
                         logging.debug('* * * * Channel number: %d', chnum)
+                        # DEBUG!!
+                        if not (chnum in range(1870, 1885) or chnum in range(2850, 2880)):
+                            continue
+                        if negative and chnum > 1903:
+                            logging.debug('Negative selected! Skipping collection channel %d . . .', chnum)
+                            continue
+                        # DEBUG?
+                        if chnum in BAD_CHANNELS:
+                            logging.debug('Known bad channel %d. Skipping . . .', chnum)
+                            continue
                         heights, peak_locations, fullpeakinfo = peak_heights(data[i], cutoff)
                         # set to 0 (effectively delete) "peaks" too close to
                         # signal edge to be accurately measured
@@ -203,10 +234,12 @@ def main():
                         
                         # pulse fitting
                         for loc, height in zip(peak_locations, heights):
-                            WINDOW_BEFORE = -20
-                            WINDOW_BEFORE_FIT = -WINDOW_BEFORE - 5
-                            WINDOW_AFTER = 30
-                            WINDOW_AFTER_FIT = -WINDOW_BEFORE + 7
+                            WINDOW_BEFORE = -200
+                            WINDOW_BEFORE_FIT = -WINDOW_BEFORE - 4
+                            WINDOW_AFTER = 200
+                            WINDOW_AFTER_FIT = -WINDOW_BEFORE + 6
+                            WINDOW_DISPLAY_BEFORE = -20
+                            WINDOW_DISPLAY_AFTER = WINDOW_AFTER
                             # off by one or not? think about it
                             if loc < -WINDOW_BEFORE or loc > TIMESTAMPS_PER_FRAME - WINDOW_AFTER:
                                 continue
@@ -215,31 +248,43 @@ def main():
                             # size of window to draw on plot and to use for fit
                             window = data[i][loc + WINDOW_BEFORE:loc + WINDOW_AFTER].astype(np.float64)# - data[i][loc - 6]
                             fitwindow = window[WINDOW_BEFORE_FIT:WINDOW_AFTER_FIT]
-                            popt, pcov = fit_peak(fitwindow, height)   # only fit rising edge?
+                            # window for baseline
+                            bwindow = window[:WINDOW_BEFORE_FIT]
+                            baseline = np.mean(bwindow)
+                            baselinestd = np.std(bwindow)
+                            #popt, pcov = fit_peak(fitwindow, height)   # only fit rising edge?
+                            popt, pcov = fit_peak(fitwindow, height, baseline)
                             real_amplitude = popt[0] / 10.11973588
                             logging.debug("popt: %s\npcov: %s", str(popt), str(pcov))
-                            # DEBUG
+                            area = scipy.integrate.quad(filtfunc.f, 0., 8., args=(popt[0], popt[1], 0., 0.))
+                            logging.debug("area: %s", str(area))
+
+                            # DEBUG / plot-drawing
                             x = (np.arange(len(window)) - WINDOW_BEFORE_FIT) * TIME_PER_SAMPLE
-                            x2 = np.linspace(x[0], x[-1], 512)
-                            y = filtfunc.f(x2, popt[0], popt[1], popt[2], popt[3])
+                            # fix to actually use WINDOW_DISPLAY_AFTER ?
+                            x2 = np.linspace(x[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE], x[-1], 2048)
+                            #y = filtfunc.f(x2, popt[0], popt[1], popt[2], popt[3])
+                            y = filtfunc.f(x2, popt[0], popt[1], popt[2], baseline)
                             logging.debug("Min vs. max fitted: %.2f", np.max(y) - np.min(y))
-                            fig, ax = plt.subplots(figsize=(12, 8))
-                            ax.scatter(x, window, s=10, label='Data')
+                            fig, ax = plt.subplots(figsize=(24, 8))
+                            ax.scatter(x[WINDOW_AFTER_FIT:], window[WINDOW_AFTER_FIT:], s=10, label='Data')
                             ax.scatter(x[WINDOW_BEFORE_FIT:WINDOW_AFTER_FIT], fitwindow, s=10, label='Data used for fit')
+                            ax.scatter(x[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE:WINDOW_BEFORE_FIT], bwindow[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE:], s=10, label='Data used for baseline')
                             ax.plot(x2, y, linewidth=0.5, label='Fit')
                             pmax = np.max(window)
-                            ax.text(7, pmax, f'A0: {popt[0]:8.2f}\nrA: {real_amplitude:8.2f}\ntp: {popt[1]:8.2f}\nh:  {popt[2]:8.2f}\nb:  {popt[3]:8.2f}', fontsize=15, fontfamily='monospace', verticalalignment='top')
-                            ax.legend()
+                            #ax.text(7, pmax, f'A0: {popt[0]:8.2f}\nrA: {real_amplitude:8.2f}\ntp: {popt[1]:8.2f}\nh:  {popt[2]:8.2f}\nb:  {popt[3]:8.2f}', fontsize=15, fontfamily='monospace', verticalalignment='top')
+                            ax.text(7, pmax, f'A0: {popt[0]:8.2f}\nrA: {real_amplitude:8.2f}\ntp: {popt[1]:8.2f}\nh:  {popt[2]:8.2f}\nb:  {baseline:8.2f}\nbs: {baselinestd:8.2f}\na: {area[0]:9.2f}', fontsize=15, fontfamily='monospace', verticalalignment='top')
+                            ax.legend(loc='upper left')
                             ax.set(
                                     title=f'Pulser DAC = {pulserDAC}, Record {rec[0]}, Channel {chnum}, Peak at {loc}',
                                     xlabel='Time (microseconds)',
                                     ylabel='ADC Counts',
-                                    xticks=np.arange(round(x[0]), round(x[-1]), 2),
+                                    xticks=np.arange(round(x[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE]), round(x[-1]), 2),
                                     )
                             #fig.savefig(f'debug/DEBUGPLOT_{i}_{loc}.png')
-                            fig.savefig(f'fitplots_crp4/{pulserDAC}_{rec[0]}_{chnum}_{loc}.png')
+                            fig.savefig(f'{config["fitplotsdir"]}{pulserDAC}_{rec[0]}_{chnum}_{loc}.png')
                             plt.close()
-                            break   # DEBUG
+                            #break   # DEBUG
 
         # COMMENTED FOR PLOTFITTING TO FIRST CHANNEL ONLY
         #allpeakheights_flatter = allpeakheights.reshape((CHANNELS_PER_CRP, len(records) * MAX_PEAKS_PER_EVENT))
