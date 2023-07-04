@@ -18,5 +18,6 @@ is0 = firstcol != 0
 print(is0)
 alldf2 = alldf.loc[is0]
 alldf2.rename_axis(['Pulser DAC', 'Channel', 'Pulse No.'], axis='index', inplace=True)
+alldf2.index = alldf2.index.set_levels(alldf2.index.levels[1].astype('int16'), level=1)
 print(alldf2)
 alldf2.to_pickle('fitresults/all.pkl')
