@@ -44,7 +44,7 @@ def peak_heights(arr, cutoff: int):
     the height of the highest - cutoff."""
     #peaks, peakinfo = scipy.signal.find_peaks(arr, height=np.max(arr) - cutoff, prominence=(None, None), wlen=20)
     peaks, peakinfo = scipy.signal.find_peaks(arr, distance=2000, prominence=(cutoff, None), wlen=20, width=3.5)
-    #logging.debug('* * * * Peaks: %s\n* * * * Peak info: %s', str(peaks), str(peakinfo))
+    logging.debug('* * * * Peaks: %s\n* * * * Peak info: %s', str(peaks), str(peakinfo))
     return peakinfo['prominences'], peaks, peakinfo
 
 def fit_peak(arr, height, base=None):
@@ -93,7 +93,7 @@ def read_config(configfname):
     else:
         config['pulserDACs'] = [int(i) for i in config['pulserDACs'].split(',')]
     logging.info('Successfully read config file')
-    #logging.debug('Config: %s', str(config))
+    logging.debug('Config: %s', str(config))
     return config
 
 def read_peaksfile(fname, config):
@@ -123,6 +123,7 @@ def frames_in_file_iter(fname: str):
     """Iterable for looping over frames in a file"""
     raise NotImplementedError()
 
+#@profile
 def main():
     set_loglevel()
     if len(sys.argv) < 2:
@@ -185,8 +186,8 @@ def main():
 
         #alldata = []    # new pedestal-finding terrible
         first = True
-        #for rec in records[:1]: # DEBUG
-        for rec in records:
+        #for rec in records:
+        for rec in records: # DEBUG
             logging.info('* Record: %s', str(rec))
             assert rec[1] == 0
             # One "fragment" is either data and metadata from a single WIB or some
@@ -195,12 +196,12 @@ def main():
             for fragnum, fragpath in enumerate(fragpaths):
                 #if fragnum == 0:    # DEBUG
                 #    continue
-                #logging.debug('* * Fragment: %s', fragpath)
+                logging.debug('* * Fragment: %s', fragpath)
                 frag = h5_file.get_frag(fragpath)
                 fragheader = frag.get_header()
                 assert fragheader.version == 5
                 # Only attempt to process WIB data, not metadata fragments
-                #logging.debug('* * * FragmentType: %s', fragheader.fragment_type)
+                logging.debug('* * * FragmentType: %s', fragheader.fragment_type)
                 if fragheader.fragment_type == daqdataformats.FragmentType.kWIB.value:
                     # WIB2Frame object stores data and another level of metadata
                     # for a single WIB
@@ -212,7 +213,7 @@ def main():
                     #alldata.append(data)
                     if data.shape != (256, TIMESTAMPS_PER_FRAME):
                         logging.warning('Bad data shape? shape: %s for fragment %s, record %s', str(data.shape), fragpath, str(rec))
-                    ##logging.debug('* * * data shape: %s', str(data.shape))
+                    #logging.debug('* * * data shape: %s', str(data.shape))
                     #assert data.shape == (256, TIMESTAMPS_PER_FRAME)
                     if first:
                         cutoff = round(np.std(data[0]) * 6)
@@ -226,16 +227,16 @@ def main():
                     #n = 245 if fragnum == 1 else 0
                     for i in range(256):
                         chnum = CHANNEL_MAP.get_offline_channel_from_crate_slot_fiber_chan(frameheader.crate, frameheader.slot, frameheader.link, i)
-                        #logging.debug('* * * * Channel number: %d', chnum)
+                        logging.debug('* * * * Channel number: %d', chnum)
                         ## DEBUG!!
-                        #if not (chnum in range(1870, 1885) or chnum in range(2850, 2880)):
+                        #if not (chnum in range(1625, 1670)):
                         #    continue
                         if negative and chnum > 1903:
-                            #logging.debug('Negative selected! Skipping collection channel %d . . .', chnum)
+                            logging.debug('Negative selected! Skipping collection channel %d . . .', chnum)
                             continue
                         # DEBUG?
                         if chnum in BAD_CHANNELS:
-                            #logging.debug('Known bad channel %d. Skipping . . .', chnum)
+                            logging.debug('Known bad channel %d. Skipping . . .', chnum)
                             continue
                         heights, peak_locations, fullpeakinfo = peak_heights(data[i], cutoff)
                         # set to 0 (effectively delete) "peaks" too close to
@@ -244,12 +245,12 @@ def main():
                             #heights[0] = 0
                             heights = heights[1:]
                             peak_locations = peak_locations[1:]
-                            #logging.debug('First peak too close to edge! Ignoring it . . .')
+                            logging.debug('First peak too close to edge! Ignoring it . . .')
                         elif peak_locations[-1] > TIMESTAMPS_PER_FRAME - 9:
                             #heights[-1] = 0
                             heights = heights[:-1]
                             peak_locations = peak_locations[:-1]
-                            #logging.debug('Last peak too close to edge! Ignoring it . . .')
+                            logging.debug('Last peak too close to edge! Ignoring it . . .')
                         l = len(heights)
                         if firstchan:
                             expected_peaks = peak_locations
@@ -260,7 +261,7 @@ def main():
                             firstchan = False
                         elif l != expected_peaks_len or np.any(np.abs(expected_peaks - peak_locations) > 1):
                             if chnum in BAD_CHANNELS:
-                                #logging.debug('Known bad channel: Mismatched peaks in channel %d (fragment %s, record %s): expected %s, got %s, heights %s', chnum, fragpath, str(rec), str(expected_peaks), str(peak_locations), str(heights))
+                                logging.debug('Known bad channel: Mismatched peaks in channel %d (fragment %s, record %s): expected %s, got %s, heights %s', chnum, fragpath, str(rec), str(expected_peaks), str(peak_locations), str(heights))
                                 pass
                             else:
                                 logging.warning('Mismatched peaks in channel %d (fragment %s, record %s): expected %s, got %s, heights %s, full peak info: %s', chnum, fragpath, str(rec), str(expected_peaks), str(peak_locations), str(heights), str(fullpeakinfo))
@@ -275,14 +276,14 @@ def main():
                             height = heights[ind]
                             WINDOW_BEFORE = -200
                             WINDOW_BEFORE_FIT = -WINDOW_BEFORE - 4
-                            WINDOW_AFTER = 200
+                            WINDOW_AFTER = 120
                             WINDOW_AFTER_FIT = -WINDOW_BEFORE + 6
                             WINDOW_DISPLAY_BEFORE = -20
                             WINDOW_DISPLAY_AFTER = WINDOW_AFTER
                             # off by one or not? think about it
                             if loc < -WINDOW_BEFORE or loc > TIMESTAMPS_PER_FRAME - WINDOW_AFTER:
                                 continue
-                            #logging.debug("loc: %s, height: %s", str(loc), str(height))
+                            logging.debug("loc: %s, height: %s", str(loc), str(height))
                             #window = data[i][loc - 6:loc + 7]# - data[i][loc - 6]
                             # size of window to draw on plot and to use for fit
                             window = data[i][loc + WINDOW_BEFORE:loc + WINDOW_AFTER].astype(np.float64)# - data[i][loc - 6]
@@ -294,10 +295,10 @@ def main():
                             #popt, pcov = fit_peak(fitwindow, height)   # only fit rising edge?
                             #popt, pcov = fit_peak(fitwindow, height, baseline)
                             popt, pcov = fit_peak2(fitwindow - baseline, height)
-                            #real_amplitude = popt[0] / 10.11973588
-                            #logging.debug("popt: %s\npcov: %s", str(popt), str(pcov))
+                            real_amplitude = popt[0] / 10.11973588
+                            logging.debug("popt: %s\npcov: %s", str(popt), str(pcov))
                             area = scipy.integrate.quad(filtfunc.f_fast, 0., 8., args=(popt[0], popt[1]))
-                            #logging.debug("area: %s", str(area))
+                            logging.debug("area: %s", str(area))
 
                             # saving data to giant arrays
                             recind = MAX_PEAKS_PER_EVENT * (rec[0] - 1) + ind
@@ -318,8 +319,8 @@ def main():
                                 x2 = np.linspace(x[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE], x[-1], 2048)
                                 #y = filtfunc.f(x2, popt[0], popt[1], popt[2], popt[3])
                                 y = filtfunc.f(x2, popt[0], popt[1], popt[2], baseline)
-                                #logging.debug("Min vs. max fitted: %.2f", np.max(y) - np.min(y))
-                                fig, ax = plt.subplots(figsize=(24, 8))
+                                logging.debug("Min vs. max fitted: %.2f", np.max(y) - np.min(y))
+                                fig, ax = plt.subplots(figsize=(20, 8), layout='constrained')
                                 ax.scatter(x[WINDOW_AFTER_FIT:], window[WINDOW_AFTER_FIT:], s=10, label='Data')
                                 ax.scatter(x[WINDOW_BEFORE_FIT:WINDOW_AFTER_FIT], fitwindow, s=10, label='Data used for fit')
                                 ax.scatter(x[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE:WINDOW_BEFORE_FIT], bwindow[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE:], s=10, label='Data used for baseline')
