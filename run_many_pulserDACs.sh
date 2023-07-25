@@ -2,7 +2,7 @@
 
 set -m
 
-#./run_many_pulserDACs.py
-for i in {11..26..4}; do
-	python find_undershoots.py _config_multirun_$i.tsv INFO 2> fitlogs/log_fitplots_all_$i.log &
+#./run_many_pulserDACs_crp5_high.py
+for i in {1..31..2}; do
+	python find_undershoots.py cfg_crp5/_config_multirun_crp5_high_$i.tsv INFO 2> fitlogs_crp5/log_high_bonus_$i.log &
 done

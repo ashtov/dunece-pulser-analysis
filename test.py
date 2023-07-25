@@ -12,6 +12,14 @@ import rawdatautils.unpack.wib2
 
 from findpeaks import read_parameters
 
+# sys.argv:
+# 1: rec (index from 0)
+# 2: fragment number
+# 3: channel number
+# 4: start record number
+# 5: end record number
+# 6: pulser DAC
+
 #FNAME = 'np02_bde_coldbox_run020331_0000_dataflow0_datawriter_0_20230309T180027.hdf5'
 #FNAME = 'crp4_pulser_runs/np02_bde_coldbox_run020268_0000_dataflow0_datawriter_0_20230309T161417.hdf5'
 #FNAME = 'crp4_pulser_runs/np02_bde_coldbox_run020269_0000_dataflow0_datawriter_0_20230309T161601.hdf5'
@@ -25,11 +33,13 @@ CHANNEL_MAP = 'VDColdboxChannelMap'
 
 ch_map = detchannelmaps.make_map(CHANNEL_MAP)
 
-parametersfname = 'filelistcalib_trunc.tsv'
+parametersfname = 'filelistcalib_crp5_high.tsv'
 parameters = read_parameters(parametersfname)
 if len(sys.argv) > 6:
     pulserDAC = int(sys.argv[6])
-    FNAME = parameters.at[pulserDAC + 20268, 'Filename']
+    #FNAME = parameters.at[pulserDAC + 20268, 'Filename']
+    #FNAME = parameters.at[pulserDAC + 21010, 'Filename']
+    FNAME = parameters.at[pulserDAC + 21082, 'Filename']
 else:
     print('probably should give all parameters')
     FNAME = 'crp4_pulser_runs/np02_bde_coldbox_run020291_0000_dataflow0_datawriter_0_20230309T165303.hdf5'
@@ -132,7 +142,7 @@ if len(sys.argv) > 5:
         y = adcdata[:, MYCHAN.channel]
         fig, ax = plt.subplots(figsize=(32, 8), layout='constrained')
         ax.plot(y, linewidth=0.3)
-        fig.savefig(f'rawsignalplots/signal_{pulserDAC}_{channelnum}_{j}.png')
+        fig.savefig(f'rawsignalplots_crp5_high/signal_{pulserDAC}_{channelnum}_{j}.png')
         plt.close()
         peaks, peaksinfo = scipy.signal.find_peaks(y, prominence=(500, None), wlen=20, width=(None, None), height=(None, None))
         print(peaks)
@@ -156,7 +166,7 @@ if len(sys.argv) > 5:
             ax[k].grid(which='minor', linewidth=0.3)
             #ax[k].set_ylim(0, 16384)
             #ax[k].set_ylim((800, 1150))
-        fig.savefig(f'rawsignalplots/peaks_{pulserDAC}_{channelnum}_{j}.png')
+        fig.savefig(f'rawsignalplots_crp5_high/peaks_{pulserDAC}_{channelnum}_{j}.png')
         plt.close()
 
 

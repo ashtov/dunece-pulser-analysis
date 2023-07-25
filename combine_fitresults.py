@@ -5,7 +5,7 @@ from pprint import pprint
 
 import pandas as pd
 
-files = glob.glob('fitresults/*bonus.pkl')
+files = glob.glob('fitresults/*bonus2.pkl')
 #files.sort(key=lambda x: int(x[x.rfind('_') + 1:x.rfind('.')]))
 files.sort(key=lambda x: int(x[x.find('_', x.rfind('/')) + 1:x.rfind('_')]))
 pprint(files)
@@ -21,4 +21,4 @@ alldf2 = alldf.loc[is0]
 alldf2.rename_axis(['Pulser DAC', 'Channel', 'Pulse No.'], axis='index', inplace=True)
 alldf2.index = alldf2.index.set_levels(alldf2.index.levels[1].astype('int16'), level=1)
 print(alldf2)
-alldf2.to_pickle('fitresults/all_bonus.pkl')
+alldf2.to_pickle('fitresults/all_bonus2.pkl')
