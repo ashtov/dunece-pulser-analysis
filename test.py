@@ -44,6 +44,8 @@ else:
     print('probably should give all parameters')
     FNAME = 'crp4_pulser_runs/np02_bde_coldbox_run020291_0000_dataflow0_datawriter_0_20230309T165303.hdf5'
 
+FNAME = 'apa3_pulser_runs/np04_coldbox_run016930_0000_dataflow0_20221019T103844.hdf5'
+
 print(FNAME)
 h5_file = HDF5RawDataFile(FNAME)
 print(h5_file)

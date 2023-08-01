@@ -4,8 +4,6 @@ import pandas as pd
 from matplotlib import pyplot as plt
 import scipy
 
-#BAD_CHANNELS = [1958, 2250, 2868]
-BAD_CHANNELS = [182, 1424, 1849, 2949, 2997, 3019]
 CAP = 0.185e-12         # capcitance of LArASIC pulser's capacitor
 V_PER_BIT = 8.08e-3     # at 14 mV / fC LArASIC setting
 CHARGE_PER_PULSERDAC = V_PER_BIT * CAP          # injected charge per PulserDAC setting (in theory)
@@ -17,9 +15,10 @@ C_e = CHARGE_PER_PULSERDAC / scipy.constants.e  # injected charge per PulserDAC 
 @click.option('--statsfile', '-s', type=click.Path(exists=True, dir_okay=False))
 @click.option('--statsout', '-o', type=click.Path(writable=True))
 @click.option('--charge/--daclevel', '-c/-d', default=True)
+@click.option('--crp5/--crp4', default=False)
 @click.pass_context
-def main(ctx, filename, statsfile, statsout, charge):
-    global C
+def main(ctx, filename, statsfile, statsout, charge, crp5):
+    global C, BAD_CHANNELS, DACLEVELS, CRPNAME
     ctx.ensure_object(dict)
     alldata = pd.read_pickle(filename)
     alldata['Real Amplitude'] = alldata['Amplitude'] / 10.11973588
@@ -51,6 +50,23 @@ def main(ctx, filename, statsfile, statsout, charge):
         C = C_fC
     else:
         C = 1
+    if crp5:
+        BAD_CHANNELS = [182, 1424, 1849, 2949, 2997, 3019]
+        DACLEVELS = [np.array(i) for i in [
+                list(range(2, 31)),
+                list(range(2, 14)) + list(range(15, 32)) + list(range(33, 61)),
+                ]]
+        CRPNAME = 'CRP5'
+    else:
+        BAD_CHANNELS = [1958, 2250, 2868]
+        DACLEVELS = [np.array(i) for i in [
+                #list(range(2, 4)) + list(range(7, 31)),
+                list(range(2, 31)),                    # DEBUG
+                #list(range(2, 20)) + list(range(21, 38)) + list(range(39, 41)) + list(range(42, 51)) + list(range(52, 61)),
+                list(range(2, 31)),
+                ]]
+        CRPNAME = 'CRP4'
+
 
 @main.command()
 @click.option('--daclevels', nargs=2, type=click.IntRange(1, 64), default=(1, 64))
@@ -134,7 +150,7 @@ def gain(ctx, channel, out, ytype):
     fig, ax = plt.subplots(figsize=(12, 8), layout='constrained')
     ax.boxplot(a, positions=a.columns, whis=(0, 100))
     ax.set(
-            title='Distribution of average pulse area over all channels at each Pulser DAC setting for CRP5\n'
+            title=f'Distribution of average pulse area over all channels at each Pulser DAC setting for {CRPNAME}\n'
                     '(boxes at quartiles, whiskers at full range)',
             xlabel='Pulser DAC setting',
             ylabel='Average pulse area (ADC counts * us)',
@@ -142,16 +158,6 @@ def gain(ctx, channel, out, ytype):
             )
     fig.savefig(out)
     plt.close()
-
-#DACLEVELS = [np.array(i) for i in [
-#        list(range(2, 4)) + list(range(7, 31)),
-#        list(range(2, 20)) + list(range(21, 38)) + list(range(39, 41)) + list(range(42, 51)) + list(range(52, 61)),
-#        ]]
-
-DACLEVELS = [np.array(i) for i in [
-        list(range(2, 31)),
-        list(range(2, 14)) + list(range(15, 32)) + list(range(33, 61)),
-        ]]
 
 #@main.command()
 #@click.option('--out', '-o', type=click.Path(), required=True)
@@ -206,9 +212,10 @@ def gain_plot_channel(ctx, out_prefix, channels, ytype):
         click.echo(chas)
         x = chas.index.get_level_values('Pulser DAC').to_numpy() * C
         y = chas.to_numpy()
-        x2 = np.arange(0, 64) * C
+        #x2 = np.arange(0, 64) * C
+        x2 = np.arange(0, 64 if channel >= 1904 else 32) * C
         y2 = x2 * chfit.at['slope'] + chfit.at['intercept']
-        residuals = np.empty(64)
+        residuals = np.empty(64 if channel >= 1904 else 32)
         residuals[0] = -y2[0]
         residuals[1:] = y - y2[1:]
         gain_e_per_ADC = chfit.at['gain_e_per_ADC']
@@ -418,11 +425,11 @@ def tp_distribution(ctx, out):
                 )
     ax[0][0].set_ylabel('Count')
     ax[1][0].set_ylabel('Peaking time')
-    fig.suptitle(f'CRP5 Peaking Time Distribution by Plane')
+    fig.suptitle(f'{CRPNAME} Peaking Time Distribution by Plane')
     fig.savefig(out)
     plt.close()
 
-def triple_plot(out, stats, binrange=None, statname="UNSPECIFIED"):
+def triple_plot(out, stats, binrange=None, statname="UNSPECIFIED", fit=True):
     """Draw histogram + channel plot, by plane, of some stat, and save to out"""
     fig, ax = plt.subplots(2, 3, figsize=(24, 12), layout='constrained')
     if binrange:
@@ -440,25 +447,28 @@ def triple_plot(out, stats, binrange=None, statname="UNSPECIFIED"):
         _, binedges, _ = ax[0][i].hist(stats[i].to_numpy(), bins=bins)
         ax[0][i].set(
                 title=names[i],
-                xlabel=f'Average {statname} (us)',
+                xlabel=f'Average {statname}',
                 )
         if not binrange:
             fitx = np.linspace(binedges[0], binedges[-1], 100)
-        ax[0][i].plot(fitx, scipy.stats.norm.pdf(fitx, means[i], stds[i]) * counts[i] * (binedges[1] - binedges[0]))
-        ax[0][i].text(binedges[-9], ax[0][i].get_ylim()[1] * 0.8, f'mean: {means[i]:7.2f}\nstd: {stds[i]:8.2f}\nstd%: {stdpct[i]:7.2f}%', fontsize=15, fontfamily='monospace', verticalalignment='top')
+        if fit:
+            ax[0][i].plot(fitx, scipy.stats.norm.pdf(fitx, means[i], stds[i]) * counts[i] * (binedges[1] - binedges[0]))
+            ax[0][i].text(binedges[-9], ax[0][i].get_ylim()[1] * 0.8, f'mean: {means[i]:7.2f}\nstd: {stds[i]:8.2f}\nstd%: {stdpct[i]:7.2f}%', fontsize=15, fontfamily='monospace', verticalalignment='top')
         ax[1][i].scatter(stats[i].index.to_numpy(), stats[i].to_numpy(), s=3)
+        ax[1][i].axhline(color='black', linewidth=0.5)
         ax[1][i].set(
                 xlabel='Channel number',
                 xlim=RANGES[i],
                 )
         if binrange:
             ax[1][i].set(
-                yticks=np.linspace(*binrange[:2], 7),
+                #yticks=np.linspace(*binrange[:2], 7),
+                yticks=binedges[::4],
                 ylim=binrange[:2],
                 )
     ax[0][0].set_ylabel('Count')
     ax[1][0].set_ylabel(statname)
-    fig.suptitle(f'CRP5 {statname} Distribution by Plane')
+    fig.suptitle(f'{CRPNAME} {statname} Distribution by Plane')
     fig.savefig(out)
     plt.close()
 
@@ -475,7 +485,11 @@ undershoot_params = {
         'Undershoot Start': {
             'binrange': None,
             },
+        'Undershoot Area': {
+            'binrange': None,
+            },
         }
+
 @main.command()
 @click.option('--out-prefix', '-o', 'out', type=click.Path(), required=True)
 @click.pass_context
@@ -483,25 +497,61 @@ def undershoot_hists(ctx, out):
     #threshold = ctx.obj['allstats'].loc[:, ('Baseline Standard Deviation', 'mean')] * 4
     #mask = ctx.obj['allstats'].loc[:, ('Undershoot', 'mean')].abs() > threshold
     #mask = ctx.obj['allstats'].loc[:, ('Undershoot Position', 'mean')] > 12.0
-    a = (ctx.obj['alldata'].loc[:, 'Undershoot Start'] == 13.0).groupby(['Pulser DAC', 'Channel']).sum()
-    print(a)
-    mask = a > 150
-    allstats_masked = ctx.obj['allstats'].loc[mask]
-    #allstats_masked = ctx.obj['allstats']
-    for j in range(50, 53):
+    #a = (ctx.obj['alldata'].loc[:, 'Undershoot Start'] == 13.0).groupby(['Pulser DAC', 'Channel']).sum()
+    #print(a)
+    #mask = a > 150
+    #allstats_masked = ctx.obj['allstats'].loc[mask]
+    allstats_masked = ctx.obj['allstats']
+    for j in range(1, 64):
         if j not in allstats_masked.index:
             continue
-        for i, statname in enumerate(undershoot_params.keys()):
-            params = undershoot_params[statname]
-            #stats_full = ctx.obj['allstats'].loc[j, (statname, 'mean')]
-            stats_full = allstats_masked.loc[j, (statname, 'mean')]
-            click.echo(stats_full)
-            stats = split_by_plane(stats_full, level=0)
-            triple_plot(f'{out}_{statname}_{j}.png', stats, binrange=params['binrange'], statname=statname)
+        #for i, statname in enumerate(undershoot_params.keys()):
+        #    params = undershoot_params[statname]
+        #    #stats_full = allstats_masked.loc[j, (statname, 'mean')]
+        #    #click.echo(stats_full)
+        #    #stats = split_by_plane(stats_full, level=0)
+        #    #triple_plot(f'{out}_{statname}_{j}.png', stats, binrange=params['binrange'], statname=statname)
+        #    stats_full = allstats_masked.loc[j, (statname, 'mean')]
+        #    click.echo(stats_full)
+        #    stats = split_by_plane(stats_full, level=0)
+        #    triple_plot(f'{out}_{statname}_mean_{j}.png', stats, binrange=params['binrange'], statname=statname)
         fig, ax = plt.subplots(figsize=(12, 8), layout='constrained')
         ax.scatter(allstats_masked.loc[j, ('Undershoot Position', 'mean')].to_numpy(), allstats_masked.loc[j, ('Undershoot', 'mean')].to_numpy(), s=3)
+        ax.axhline(color='black', linewidth=0.5)
+        ax.axvline(color='black', linewidth=0.5)
         fig.savefig(f'{out}_scatter_{j}.png')
         plt.close()
+
+@main.command()
+@click.option('--out-prefix', '-o', 'out', type=click.Path(), required=True)
+@click.pass_context
+def undershoot_analysis(ctx, out):
+    datanames = ['Undershoot', 'Undershoot Position', 'Recovery Position', 'Undershoot Start']
+    rdata = ctx.obj['alldata'].loc[:, datanames]
+    startsfirst = rdata.loc[:, 'Undershoot Start'] == 13
+    for i in range(10):
+        a = rdata.loc[(50, i)]
+        fig, ax = plt.subplots(ncols=4, figsize=(24, 8))
+        for j in range(4):
+            ax[j].hist(a.loc[:, datanames[j]])
+            ax[j].set_title(datanames[j])
+        fig.savefig(out + f'_{i}.png')
+        plt.close()
+
+@main.command()
+@click.option('--out', '-o', 'out', type=click.Path(), required=True)
+@click.pass_context
+def undershoot_analysis_2(ctx, out):
+    gain_amplitude = calc_gain(ctx, ytype="Real Amplitude").loc[:, 'slope']
+    gain_undershoot = calc_gain(ctx, ytype="Undershoot").loc[:, 'slope']
+    #gain_amplitude = calc_gain(ctx, ytype="Peak Area").loc[:, 'slope']
+    #gain_undershoot = calc_gain(ctx, ytype="Undershoot Area").loc[:, 'slope']
+    pct_undershoot = gain_undershoot / gain_amplitude * 100
+    stats = split_by_plane(pct_undershoot, level=0)
+    triple_plot(out, stats, statname='Undershoot %', binrange=(-8, 5, 53), fit=False)
+    pct_undershoot.to_pickle(out[:-4] + '.pkl')
+    click.echo(pct_undershoot.nlargest(20))
+    click.echo(pct_undershoot.nsmallest(20))
 
 gain_hist_strs = {
         'Peak Area': {
@@ -627,7 +677,7 @@ def gain_hist(ctx, out, channel_map, ytype):
     ax.grid(which='major', axis='x', color='black')
     ax.grid(which='minor', axis='x')
     ax.set(
-            title=f'CRP5 Gain by ASIC (gain from {ytype})',
+            title=f'{CRPNAME} Gain by ASIC (gain from {ytype})',
             xlabel='FEMB # (grey line = 1 ASIC)',
             ylabel=strs[2]['ylabel'],
             xlim=(0, 3072),
@@ -688,7 +738,7 @@ def gain_hist(ctx, out, channel_map, ytype):
             xlim=(1904, 3072),
             ylim=strs[4]['ylim'],
             )
-    fig.suptitle(f'CRP5 Gain Distribution by Plane (gain from {ytype})')
+    fig.suptitle(f'{CRPNAME} Gain Distribution by Plane (gain from {ytype})')
     fig.savefig(out[:-4] + '_4' + '.png')
     plt.close()
     fig, ax = plt.subplots(figsize=(120, 8), layout='constrained')
