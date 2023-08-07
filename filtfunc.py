@@ -1,3 +1,5 @@
+# Fit functions for LArASIC pulse response
+
 import numpy as np
 
 LS = np.array([1.19361, 2.38722, 2.5928, 5.18561])
@@ -6,7 +8,6 @@ ES = np.array([-2.94809, -2.82833, -2.40318])
 def f(t, A0, tp, h, b):
     """'Fifth order semi-gaussian anti-aliasing filter' with parameters from
     1804.02583."""
-    #tf = np.clip((t - h) / tp, 0, None)
     tf = (t - h) / tp
     l = np.outer(LS, tf)
     sl = np.sin(l)
