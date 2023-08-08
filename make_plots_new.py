@@ -60,10 +60,11 @@ def main(ctx, filename, statsfile, statsout, charge, crp5):
     else:
         BAD_CHANNELS = [1958, 2250, 2868]
         DACLEVELS = [np.array(i) for i in [
-                #list(range(2, 4)) + list(range(7, 31)),
-                list(range(2, 31)),                    # DEBUG
-                #list(range(2, 20)) + list(range(21, 38)) + list(range(39, 41)) + list(range(42, 51)) + list(range(52, 61)),
-                list(range(2, 31)),
+                list(range(2, 4)) + list(range(7, 31)),
+                #list(range(2, 31)),                    # DEBUG
+                #list(range(2, 11)) + list(range(32, 38)) + list(range(39, 41)) + list(range(42, 50)) + list(range(52, 55)) + [56],  # for CRP4 channels sharing ASIC with 2868
+                list(range(2, 20)) + list(range(21, 38)) + list(range(39, 41)) + list(range(42, 51)) + list(range(52, 61)),
+                #list(range(2, 31)),
                 ]]
         CRPNAME = 'CRP4'
 
@@ -191,6 +192,13 @@ def calc_gain(ctx, out=None, ytype='Peak Area'):
     if out:
         d.to_pickle(out)
     return d
+
+@main.command()
+@click.option('--out', '-o', type=click.Path(), required=True)
+@click.option('--type', '-t', 'ytype', type=click.STRING, default='Real Amplitude')
+@click.pass_context
+def save_gain(ctx, out, ytype):
+    reg = calc_gain(ctx, out=out, ytype=ytype)
 
 names = ['Induction U', 'Induction V', 'Collection Z', 'Collection Z (y-range capped)']
 
@@ -328,6 +336,15 @@ def tp_stats(ctx, diff=False):
         return tp_diffs
     else:
         return tp_avgs
+
+@main.command()
+@click.option('--out', '-o', type=click.Path(), required=True)
+@click.pass_context
+def save_tp_avgs(ctx, out):
+    tp_avgs = tp_stats(ctx)
+    tp_avgs_all = pd.concat(tp_avgs)
+    click.echo(tp_avgs_all)
+    tp_avgs_all.to_pickle(out)
 
 @main.command()
 @click.option('--out', '-o', type=click.Path(), required=True)
@@ -615,6 +632,29 @@ gain_hist_strs = {
                 },
             },
     }
+
+@main.command()
+@click.option('--out', '-o', type=click.Path(), required=True)
+@click.argument('channels', nargs=-1, type=int)
+@click.pass_context
+def plot_std_vs_pulserDAC(ctx, out, channels):
+    """Plot standard deviation vs. pulser DAC setting for list of channels."""
+    fig, ax = plt.subplots(figsize=(12, 8), layout='constrained')
+    for chnum in channels:
+        y = ctx.obj['allstats'].loc[(slice(None), chnum), ('Real Amplitude', 'std')]
+        x = y.index.get_level_values('Pulser DAC').to_numpy()
+        ax.plot(x, y, linewidth=0.7, label=str(chnum))
+    ax.set(
+            title='Amplitude Standard Deviation vs. Pulser DAC Setting',
+            xlabel='Pulser DAC Setting (base 10)',
+            ylabel='Amplitude Standard Deviation (ADC Counts)',
+            yticks=np.arange(0, ctx.obj['allstats'].loc[(slice(None), channels), ('Real Amplitude', 'std')].max() // 10 * 10 + 3, 10),
+            xticks=np.arange(0, 65, 5),
+            xlim=(0, 64),
+            )
+    ax.legend()
+    fig.savefig(out)
+    plt.close()
 
 @main.command()
 @click.option('--out', '-o', type=click.Path(), required=True)
