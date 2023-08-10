@@ -63,10 +63,11 @@ def fit_peak(arr, height, base=None):
         popt, pcov = scipy.optimize.curve_fit(filtfunc.f, np.arange(len(arr)) * TIME_PER_SAMPLE, arr, p0=[height * MAGIC_CONVERSION_FACTOR, 2., 0., arr[0]], bounds=((0., 1.5, -1., arr[0] - 25), (MAX_HEIGHT, 2.5, +4., arr[0] + 25)))
     return popt, pcov
 
-def fit_peak2(arr, height):
+def fit_peak2(arr, height, baselinestd):
     """Attempts to fit filtfunc.f() to the peak beginning at index peakpos in
     arr and returns fit parameters."""
-    popt, pcov = scipy.optimize.curve_fit(filtfunc.f_no_b, np.arange(len(arr)) * TIME_PER_SAMPLE, arr, p0=[height * MAGIC_CONVERSION_FACTOR, 2., -0.3], bounds=((0., 1.5, -1.), (MAX_HEIGHT, 2.5, +1.)))
+    sigma = np.full(len(arr), baselinestd)
+    popt, pcov = scipy.optimize.curve_fit(filtfunc.f_no_b, np.arange(len(arr)) * TIME_PER_SAMPLE, arr, p0=[height * MAGIC_CONVERSION_FACTOR, 2., -0.3], bounds=((0., 1.5, -1.), (MAX_HEIGHT, 2.5, +1.)), sigma=sigma, absolute_sigma=True)
     return popt, pcov
 
 def apply_mask(arr, skip_channel):
@@ -138,9 +139,10 @@ def frames_in_file_iter(fname: str):
 @click.option('--output', '-o', type=click.Path(dir_okay=False, writable=True, readable=False), required=True, help='Filename for output (in pandas pickle format).')
 @click.option('--inputs-file', type=click.Path(exists=True, dir_okay=False), required=True, help='Location of file with list of input files and their corresponding Pulser DAC setting.')
 @click.option('--skip-channel', '-s', type=click.IntRange(0, CHANNELS_PER_CRP), multiple=True, help='Channels to skip processing in input data. Useful to ignore bad channels with garbage data. Can be specified multiple times.')
+@click.option('--channel', '-c', type=click.IntRange(0, CHANNELS_PER_CRP), multiple=True, help='Channels to process. Useful to process only a selection of channels for debugging, or to generate raw signal plots for a single channel. Default is to process all channels.')
 @click.option('--pulser-dac', '-d', type=click.IntRange(0, 63), multiple=True, help='Pulser DAC setting to process. Can be specified multiple times, in which case they will be processed in the order specified. If not specified, process all Pulser DAC settings in inputs file.')
 @click.option('--negative', '-n', is_flag=True, help='Process negative pulse data instead of positive.')
-def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file, skip_channel, pulser_dac, negative):
+def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file, skip_channel, channel, pulser_dac, negative):
     if verbose:
         loglevel = logging.DEBUG
     else:
@@ -148,6 +150,11 @@ def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file
     logging.basicConfig(level=loglevel)
     if plot and not plots_dir:
         raise click.BadOptionUsage('plot', 'Must specify --plots-dir when --plot is used')
+    if channel:
+        skip_channel = list(skip_channel)
+        for i in range(CHANNELS_PER_CRP):
+            if i not in channel:
+                skip_channel.append(i)
     parameters = read_parameters(inputs_file)
     all_pulserDACs_data = {}
 
@@ -281,7 +288,7 @@ def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file
                             bwindow = window[:WINDOW_BEFORE_FIT]
                             baseline = np.mean(bwindow)
                             baselinestd = np.std(bwindow)
-                            popt, pcov = fit_peak2(fitwindow - baseline, height)
+                            popt, pcov = fit_peak2(fitwindow - baseline, height, baselinestd)
                             amp, tp, h = popt
                             real_amplitude = popt[0] / 10.11973588
                             logging.debug("popt: %s\npcov: %s", str(popt), str(pcov))
@@ -368,6 +375,15 @@ def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file
                                 x2 = np.linspace(x[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE], x[-1], 2048)
                                 y = filtfunc.f(x2, amp, tp, h, baseline)
                                 logging.debug("Min vs. max fitted: %.2f", np.max(y) - np.min(y))
+                                # new
+                                fity = filtfunc.f(np.arange(len(fitwindow)) * TIME_PER_SAMPLE, amp, tp, h, baseline)
+                                residuals = fitwindow - fity
+                                chisq = np.sum((residuals / baselinestd)**2)
+                                redchisq = chisq / (len(fity) - 2)
+                                datafft = scipy.fft.rfft(window[WINDOW_BEFORE_FIT:WINDOW_BEFORE_FIT + 16])
+                                fitfft = scipy.fft.rfft(filtfunc.f(np.arange(16) * TIME_PER_SAMPLE, amp, tp, h, baseline))
+                                logging.debug('dataFFT:\n%s\nfitFFT:\n%s\nRatio:\n%s', str(datafft), str(fitfft), str(fitfft / datafft))
+                                # end new
                                 fig, ax = plt.subplots(figsize=(24, 8), layout='constrained')
                                 ax.scatter(x[WINDOW_AFTER_FIT:], window[WINDOW_AFTER_FIT:], s=10, label='Data')
                                 ax.scatter(x[WINDOW_BEFORE_FIT:WINDOW_AFTER_FIT], fitwindow, s=10, label='Data used for fit')
@@ -375,9 +391,11 @@ def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file
                                 ax.scatter(x=x[extremal_start + WINDOW_BEFORE_FIT], y=postwindow[extremal_start - WINDOW_EXTREMAL_CORRECTION], s=10, label='Undershoot start')
                                 ax.scatter(x=x[extremal_pos + WINDOW_BEFORE_FIT], y=postwindow[extremal_pos - WINDOW_EXTREMAL_CORRECTION], s=10, label='Undershoot')
                                 ax.scatter(x=x[extremal_end + WINDOW_BEFORE_FIT], y=postwindow[extremal_end - WINDOW_EXTREMAL_CORRECTION], s=10, label='Recovery')
+                                # DEBUG
+                                ax.scatter(x=x[WINDOW_BEFORE_FIT:WINDOW_AFTER_FIT], y=fity, s=10, label='Fitted points')
                                 ax.plot(x2, y, linewidth=0.5, label='Fit')
                                 pmax = np.max(window)
-                                ax.text(7, pmax, f'A0: {amp:9.2f}\nrA: {real_amplitude:9.2f}\ntp: {tp:9.2f}\nh:  {h:9.2f}\nb:  {baseline:9.2f}\nbs: {baselinestd:9.2f}\na: {area:10.2f}\nu: {extremal_val:10.2f}\nup: {extremal_pos:9d}\nus: {extremal_start:9d}\nue: {extremal_end:9d}\nua: {extremal_area:9.2f}', fontsize=15, fontfamily='monospace', verticalalignment='top')
+                                ax.text(7, pmax, f'A0: {amp:9.2f}\nrA: {real_amplitude:9.2f}\ntp: {tp:9.2f}\nh:  {h:9.2f}\nb:  {baseline:9.2f}\nbs: {baselinestd:9.2f}\na: {area:10.2f}\nu: {extremal_val:10.2f}\nup: {extremal_pos:9d}\nus: {extremal_start:9d}\nue: {extremal_end:9d}\nua: {extremal_area:9.2f}\nchisq: {chisq:6.2f}\nrcs: {redchisq:8.2f}', fontsize=15, fontfamily='monospace', verticalalignment='top')
                                 ax.legend(loc='upper left')
                                 ax.set(
                                         title=f'Pulser DAC = {pulserDAC}, Record {rec[0]}, Channel {chnum}, Peak at {loc}',
@@ -386,6 +404,18 @@ def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file
                                         xticks=np.arange(round(x[WINDOW_DISPLAY_BEFORE - WINDOW_BEFORE]), round(x[-1]), 2),
                                         )
                                 fig.savefig(f'{plots_dir}/{pulserDAC}_{rec[0]}_{chnum}_{loc}.png')
+                                plt.close()
+                                # DEBUG!!?
+                                fig, ax = plt.subplots(figsize=(12, 8), layout='constrained')
+                                ax.scatter(x[WINDOW_BEFORE_FIT:WINDOW_AFTER_FIT], residuals, s=20, label='Residuals')
+                                ax.axhline(linewidth=0.5, color='black')
+                                ax.set(
+                                        title=f'Pulser DAC = {pulserDAC}, Record {rec[0]}, Channel {chnum}, Peak at {loc}',
+                                        xlabel='Time (microseconds)',
+                                        ylabel='ADC Counts',
+                                        xticks=x[WINDOW_BEFORE_FIT:WINDOW_AFTER_FIT],
+                                        )
+                                fig.savefig(f'{plots_dir}/{pulserDAC}_{rec[0]}_{chnum}_{loc}_r.png')
                                 plt.close()
                             if firstonly:
                                 break

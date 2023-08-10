@@ -522,16 +522,16 @@ def undershoot_hists(ctx, out):
     for j in range(1, 64):
         if j not in allstats_masked.index:
             continue
-        #for i, statname in enumerate(undershoot_params.keys()):
-        #    params = undershoot_params[statname]
-        #    #stats_full = allstats_masked.loc[j, (statname, 'mean')]
-        #    #click.echo(stats_full)
-        #    #stats = split_by_plane(stats_full, level=0)
-        #    #triple_plot(f'{out}_{statname}_{j}.png', stats, binrange=params['binrange'], statname=statname)
-        #    stats_full = allstats_masked.loc[j, (statname, 'mean')]
-        #    click.echo(stats_full)
-        #    stats = split_by_plane(stats_full, level=0)
-        #    triple_plot(f'{out}_{statname}_mean_{j}.png', stats, binrange=params['binrange'], statname=statname)
+        for i, statname in enumerate(undershoot_params.keys()):
+            params = undershoot_params[statname]
+            #stats_full = allstats_masked.loc[j, (statname, 'mean')]
+            #click.echo(stats_full)
+            #stats = split_by_plane(stats_full, level=0)
+            #triple_plot(f'{out}_{statname}_{j}.png', stats, binrange=params['binrange'], statname=statname)
+            stats_full = allstats_masked.loc[j, (statname, 'mean')]
+            click.echo(stats_full)
+            stats = split_by_plane(stats_full, level=0)
+            triple_plot(f'{out}_{statname}_mean_{j}.png', stats, binrange=params['binrange'], statname=statname)
         fig, ax = plt.subplots(figsize=(12, 8), layout='constrained')
         ax.scatter(allstats_masked.loc[j, ('Undershoot Position', 'mean')].to_numpy(), allstats_masked.loc[j, ('Undershoot', 'mean')].to_numpy(), s=3)
         ax.axhline(color='black', linewidth=0.5)
