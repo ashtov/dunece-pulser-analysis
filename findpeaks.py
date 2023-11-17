@@ -156,6 +156,9 @@ def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file
             if i not in channel:
                 skip_channel.append(i)
     parameters = read_parameters(inputs_file)
+    if not pulser_dac:
+        pulser_dac = parameters.loc[:, 'Pulser DAC'].to_numpy()
+        print(pulser_dac)
     all_pulserDACs_data = {}
 
     for run_number in parameters.index:
@@ -382,6 +385,11 @@ def main(verbose, plot, plots_dir, existing_data, firstonly, output, inputs_file
                                 redchisq = chisq / (len(fity) - 2)
                                 datafft = scipy.fft.rfft(window[WINDOW_BEFORE_FIT:WINDOW_BEFORE_FIT + 16])
                                 fitfft = scipy.fft.rfft(filtfunc.f(np.arange(16) * TIME_PER_SAMPLE, amp, tp, h, baseline))
+                                # DEBUG print maximum badness of fit relative to amplitude
+                                maxres = np.max(np.abs(residuals))
+                                fitbadpct = maxres / real_amplitude * 100.
+                                logging.info('%d, %d: %d (%.3f)', pulserDAC, chnum, maxres, fitbadpct)
+
                                 logging.debug('dataFFT:\n%s\nfitFFT:\n%s\nRatio:\n%s', str(datafft), str(fitfft), str(fitfft / datafft))
                                 # end new
                                 fig, ax = plt.subplots(figsize=(24, 8), layout='constrained')

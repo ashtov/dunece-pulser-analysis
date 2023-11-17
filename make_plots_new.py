@@ -53,17 +53,20 @@ def main(ctx, filename, statsfile, statsout, charge, crp5):
     if crp5:
         BAD_CHANNELS = [182, 1424, 1849, 2949, 2997, 3019]
         DACLEVELS = [np.array(i) for i in [
-                list(range(2, 31)),
-                list(range(2, 14)) + list(range(15, 32)) + list(range(33, 61)),
+                list(range(4, 31)),
+                list(range(4, 14)) + list(range(15, 32)) + list(range(33, 61)),
                 ]]
         CRPNAME = 'CRP5'
     else:
         BAD_CHANNELS = [1958, 2250, 2868]
         DACLEVELS = [np.array(i) for i in [
-                list(range(2, 4)) + list(range(7, 31)),
+                #list(range(2, 4)) + list(range(7, 31)),
+                list(range(7, 31)),
                 #list(range(2, 31)),                    # DEBUG
                 #list(range(2, 11)) + list(range(32, 38)) + list(range(39, 41)) + list(range(42, 50)) + list(range(52, 55)) + [56],  # for CRP4 channels sharing ASIC with 2868
-                list(range(2, 20)) + list(range(21, 38)) + list(range(39, 41)) + list(range(42, 51)) + list(range(52, 61)),
+                #list(range(2, 20)) + list(range(21, 38)) + list(range(39, 41)) + list(range(42, 51)) + list(range(52, 61)),
+                # 34 could also be bad??? see gain_undershoot_new images???
+                list(range(4, 20)) + list(range(21, 38)) + list(range(39, 41)) + list(range(42, 51)) + list(range(52, 61)),
                 #list(range(2, 31)),
                 ]]
         CRPNAME = 'CRP4'
@@ -164,31 +167,68 @@ def gain(ctx, channel, out, ytype):
 #@click.option('--out', '-o', type=click.Path(), required=True)
 #@click.pass_context
 def calc_gain(ctx, out=None, ytype='Peak Area'):
+    def fitfunc(x, m, b):
+        return m * x + b
     def fit(s):
+        click.echo(s)
         chnum = s.index.values[0][1]
         if chnum > 1903:
-            #lastdaclevel = 60
-            #firstdaclevel = 2
-            #lastdaclevel = 60
             daclevels = DACLEVELS[1]
         else:
-            #firstdaclevel = 2
-            #lastdaclevel = 30
             daclevels = DACLEVELS[0]
-        #s2 = s.loc[firstdaclevel:lastdaclevel]
         s2 = s.loc[daclevels]
         x = s2.index.get_level_values('Pulser DAC').to_numpy() * C
-        y = s2.to_numpy()
-        return scipy.stats.linregress(x, y, alternative='greater')
-    #a = ctx.obj['areastats'].loc[:, 'mean']
-    a = ctx.obj['allstats'].loc[:, (ytype, 'mean')]
-    b = a.groupby(level='Channel', sort=False).agg(fit)
-    c = {}
-    for i in ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr', 'intercept_stderr']:
-        c[i] = b.apply(getattr, args=(i,))
-    c['gain_e_per_ADC'] = 1e-15 / scipy.constants.e / c['slope']
-    d = pd.DataFrame(c)
+        #y = s2.to_numpy()
+        y = s2.loc[:, (slice(None), 'mean')].to_numpy()
+        sigma = s2.loc[:, (slice(None), 'std')].to_numpy()
+        click.echo(y)
+        click.echo(sigma)
+        #return scipy.stats.linregress(x, y, alternative='greater')
+        return scipy.optimize.curve_fit(fitfunc, x, y, p0=(None, 0), sigma=sigma, absolute_sigma=True)
+    #a = ctx.obj['allstats'].loc[:, (ytype, 'mean')]
+    #b = a.groupby(level='Channel', sort=False).agg(fit)
+    #c = {}
+    #for i in ['slope', 'intercept', 'rvalue', 'pvalue', 'stderr', 'intercept_stderr']:
+    #    c[i] = b.apply(getattr, args=(i,))
+    #c['gain_e_per_ADC'] = 1e-15 / scipy.constants.e / c['slope']
+    #d = pd.DataFrame(c)
+    def fit2(s):
+        chnum = s.index.values[0][1]
+        if chnum > 1903:
+            daclevels = DACLEVELS[1]
+        else:
+            daclevels = DACLEVELS[0]
+        s2 = s.loc[daclevels]
+        x = s2.index.get_level_values('Pulser DAC').to_numpy() * C
+        y = s2['mean'].to_numpy()
+        sigma = s2['std'].to_numpy()
+        #popt, pcov = scipy.optimize.curve_fit(fitfunc, x, y, p0=(y[1], 0), bounds=((-np.inf, -0.1), (np.inf, 0.1)), sigma=sigma, absolute_sigma=True)
+        popt, pcov = scipy.optimize.curve_fit(fitfunc, x, y, p0=(y[1], 0), sigma=sigma, absolute_sigma=True)
+        return popt[0], popt[1], pcov[0, 0], pcov[1, 1]
+    a = ctx.obj['allstats'].loc[:, ytype]
+    #c = {name: np.full(a.index.get_level_values('Channel').max(), np.nan) for name in ['slope', 'intercept', 'slope_std', 'intercept_std', 'gain_e_per_ADC']}
+    b = a.groupby(level='Channel', sort=False).apply(fit2)
+    print(b)
+    d = pd.DataFrame.from_records(b, index=b.index, columns=['slope', 'intercept', 'slope_var', 'intercept_var'])
+    #a = ctx.obj['allstats'].loc[:, ytype].groupby(level='Channel', sort=False)
+    #for chnum, group in a:
+    #    if chnum > 1903:
+    #        daclevels = DACLEVELS[1]
+    #    else:
+    #        daclevels = DACLEVELS[0]
+    #    s2 = group.loc[daclevels]
+    #    x = s2.index.get_level_values('Pulser DAC').to_numpy() * C
+    #    y = s2.loc[:, 'mean'].to_numpy()
+    #    sigma = s2.loc[:, 'std'].to_numpy()
+    #    popt, pcov = scipy.optimize.curve_fit(fitfunc, x, y, p0=(y[1], 0), sigma=sigma, absolute_sigma=True)
+    #    c[chnum] = {'slope': popt[0], 'intercept': popt[1], 'slope_var': pcov[0, 0], 'intercept_var': pcov[1, 1]}
+    #d = pd.DataFrame.from_dict(c, orient='index')
+    d['slope_std'] = d['slope_var'].pow(1/2)
+    d['intercept_std'] = d['intercept_var'].pow(1/2)
+    d['gain_e_per_ADC'] = 1e-15 / scipy.constants.e / d['slope']
+    d['gain_e_per_ADC_std'] = 1e-15 / scipy.constants.e / d['slope'].pow(2) * d['slope_std']
     click.echo(d)
+    click.echo(d.dtypes)
     if out:
         d.to_pickle(out)
     return d
@@ -271,7 +311,8 @@ def gain_residuals(ctx, out, e_per_adc):
     if e_per_adc:   #this makes no sense
         residuals = 1e-15 / scipy.constants.e / actual - 1e-15 / scipy.constants.e / predicted.T
     else:
-        residuals = actual - predicted.T
+        #residuals = actual - predicted.T
+        residuals = (actual - predicted.T) / predicted.T * 100
     click.echo(residuals)
     residuals_df = pd.DataFrame(residuals)
     residuals_df.index = actual_df.index
@@ -281,9 +322,9 @@ def gain_residuals(ctx, out, e_per_adc):
     #fig, ax = plt.subplots(4, figsize=(16, 48), layout='constrained')
     fig, ax = plt.subplots(ncols=3, figsize=(24, 8), layout='constrained')
     # NOTE!!! THESE NUMBERS WON'T WORK IF THERE ARE MISSING CHANNELS ON INDUCTION PLANES!!!
-    ax[0].boxplot(residuals[:952, :32], positions=x[:32])
-    ax[1].boxplot(residuals[952:1904, :32], positions=x[:32])
-    ax[2].boxplot(residuals[1904:], positions=x)
+    ax[0].boxplot(residuals_df.loc[:951, :31], positions=x[:32])
+    ax[1].boxplot(residuals_df.loc[952:1903, :31], positions=x[:32])
+    ax[2].boxplot(residuals_df.loc[1904:], positions=x)
     #ax[3].boxplot(residuals[1904:], positions=x)
     #ax[3].set(
     #        yticks=np.arange(-100, 101, 50),
@@ -295,16 +336,23 @@ def gain_residuals(ctx, out, e_per_adc):
         a.set(
                 title=f'{names[ind]}\n',
                 xlabel='Pulser DAC setting',
-                yticks=np.arange(-100, 101, 50),
-                ylim=(-100, 100),
+                #yticks=np.arange(-100, 101, 50),
+                #ylim=(-100, 100),
+                #ylim=(-163.84, 163.84),
+                ylim=(-5, 5),
+                #ylabel='Residual % of full range',
                 )
-    ax[0].set_ylabel('Residuals from linear gain fit (ADC counts)')
+        #a.set_yticks(np.linspace(-163.84, 163.84, 9), labels=np.linspace(-1.0, 1.0, 9))
+        a.set_yticks(np.linspace(-5, 5, 11))
+    #ax[0].set_ylabel('Residuals from linear gain fit (ADC counts)')
+    ax[0].set_ylabel('Residual %')
     fig.suptitle('Residuals vs. Pulser DAC setting\n'
-                 'Residuals of actual amplitude from predicted amplitude due to linear gain fit. '
-                 'Gain fit from channels 2-30 for induction planes, 2-60 for collection plane (except 14, 32)\n'
-                 #'Gain fit from channels 2-30 for induction planes (except 4, 5, 6), '
-                 #'channels 2-60 for collection plane (except 20, 38, 41, 51).\n'
-                 '(boxplot over channels. y-axis capped at (-100, 100) for visibility.)'
+                 'Residuals of actual amplitude from predicted amplitude due to linear gain fit as percentage of pulse amplitude.\n'
+                 #'Gain fit from channels 2-30 for induction planes, 2-60 for collection plane (except 14, 32)\n'
+                 'Gain fit from channels 4-30 for induction planes (except 4, 5, 6), '
+                 'channels 4-60 for collection plane (except 20, 38, 41, 51).\n'
+                 #'(boxplot over channels. y-axis capped at (-100, 100) for visibility.)'
+                 '(boxplot over channels. y-axis capped at (-5.0%, 5.0%) for visibility.)'
                 )
     fig.savefig(out)
     plt.close()
